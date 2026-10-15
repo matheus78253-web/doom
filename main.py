@@ -122,6 +122,10 @@ x = 3.5
 y = 7.5
 ang = 0.0
 
+# Inércia leve para deixar a movimentação mais suave.
+velocidade_movimento_atual = 0.0
+velocidade_angular_atual = 0.0
+
 RAIO_JOGADOR = 0.20
 RAIO_INIMIGO = 0.23
 
@@ -158,6 +162,8 @@ ARMA_MOTOSERRA = 2
 
 arma_atual = ARMA_RIFLE
 menu_armas = False
+jogo_pausado = False
+tela_pausa = None
 
 rifle_municao_max = 12
 rifle_municao = 12
@@ -186,6 +192,11 @@ RECARREGANDO = False
 inimigos = []
 vida_inimigos = []
 tempo_ataque_inimigos = []
+inimigos_com_chave = []
+
+# A chave é derrubada por um inimigo específico da primeira fase.
+tem_chave = False
+posicao_chave = None
 
 caminhos = {}
 contador_ia = 0
@@ -525,6 +536,24 @@ sprites = [
     criar_sprite(2)
 ]
 
+def criar_sprite_chave():
+    sprite = pygame.Surface((24, 28), pygame.SRCALPHA)
+    dourado = (255, 205, 35)
+    claro = (255, 240, 120)
+    escuro = (170, 105, 10)
+    # Argola da chave
+    pygame.draw.circle(sprite, escuro, (8, 8), 7)
+    pygame.draw.circle(sprite, dourado, (8, 8), 5)
+    pygame.draw.circle(sprite, (30, 30, 35, 255), (8, 8), 2)
+    # Haste e dentes
+    pygame.draw.rect(sprite, dourado, (7, 12, 4, 13))
+    pygame.draw.rect(sprite, claro, (8, 13, 1, 10))
+    pygame.draw.rect(sprite, dourado, (10, 19, 6, 3))
+    pygame.draw.rect(sprite, escuro, (10, 22, 4, 3))
+    return sprite
+
+sprite_chave = criar_sprite_chave()
+
 def desenhar_sprite(sprite, sx, altura, distancia_inimigo, distancias):
     proporcao = (
         sprite.get_width()
@@ -834,6 +863,99 @@ def desenhar_arma():
     else:
         desenhar_motoserra()
 
+def desenhar_menu_pausa():
+    # Escurece o jogo ao fundo
+    camada = pygame.Surface(
+        (LARGURA, ALTURA),
+        pygame.SRCALPHA
+    )
+    camada.fill((0, 0, 0, 200))
+    tela.blit(camada, (0, 0))
+
+    # Painel principal
+    painel = pygame.Rect(100, 45, 400, 310)
+
+    pygame.draw.rect(
+        tela, (22, 25, 34), painel,
+        border_radius=12
+    )
+    pygame.draw.rect(
+        tela, (100, 115, 140), painel, 3,
+        border_radius=12
+    )
+
+    titulo = fonte_grande.render(
+        "JOGO PAUSADO", True, (255, 210, 60)
+    )
+    tela.blit(
+        titulo,
+        titulo.get_rect(center=(300, 88))
+    )
+
+    subtitulo = fonte_pequena.render(
+        f"FASE {fase + 1}/2",
+        True, (180, 190, 210)
+    )
+    tela.blit(
+        subtitulo,
+        subtitulo.get_rect(center=(300, 120))
+    )
+
+    mouse = pygame.mouse.get_pos()
+
+    botoes_menu = [
+        (pygame.Rect(145, 145, 310, 45),
+         "CONTINUAR", "continuar"),
+        (pygame.Rect(145, 205, 310, 45),
+         "REINICIAR FASE", "reiniciar"),
+        (pygame.Rect(145, 265, 310, 45),
+         "SAIR DO JOGO", "sair")
+    ]
+
+    for retangulo, texto, acao in botoes_menu:
+        selecionado = retangulo.collidepoint(mouse)
+
+        cor_fundo = (
+            (55, 95, 75) if selecionado
+            else (38, 43, 55)
+        )
+        cor_borda = (
+            (100, 255, 140) if selecionado
+            else (95, 105, 125)
+        )
+        cor_texto = (
+            (255, 235, 130) if selecionado
+            else (240, 240, 245)
+        )
+
+        pygame.draw.rect(
+            tela, cor_fundo, retangulo,
+            border_radius=7
+        )
+        pygame.draw.rect(
+            tela, cor_borda, retangulo, 2,
+            border_radius=7
+        )
+
+        texto_renderizado = fonte.render(
+            texto, True, cor_texto
+        )
+        tela.blit(
+            texto_renderizado,
+            texto_renderizado.get_rect(
+                center=retangulo.center
+            )
+        )
+
+    ajuda = fonte_pequena.render(
+        "ESC - CONTINUAR",
+        True, (165, 175, 195)
+    )
+    tela.blit(
+        ajuda,
+        ajuda.get_rect(center=(300, 333))
+    )
+
 def carregar_fase(numero):
     global fase
     global mapa
@@ -848,6 +970,9 @@ def carregar_fase(numero):
     global inimigos
     global vida_inimigos
     global tempo_ataque_inimigos
+    global inimigos_com_chave
+    global tem_chave
+    global posicao_chave
     global caminhos
     global contador_ia
     global x
@@ -855,8 +980,16 @@ def carregar_fase(numero):
     global ang
     global mudando_fase
     global tempo_transicao
+    global velocidade_movimento_atual
+    global velocidade_angular_atual
+
+    velocidade_movimento_atual = 0.0
+    velocidade_angular_atual = 0.0
 
     fase = numero
+    if numero == 0:
+        tem_chave = False
+        posicao_chave = None
     mapa = mapas[fase]
 
     MAPA_ALTURA = len(mapa)
@@ -871,6 +1004,7 @@ def carregar_fase(numero):
     inimigos = []
     vida_inimigos = []
     tempo_ataque_inimigos = []
+    inimigos_com_chave = []
 
     caminhos = {}
     contador_ia = 0
@@ -884,7 +1018,7 @@ def carregar_fase(numero):
         y = 13.5
         ang = 0.0
 
-    for pos in inimigos_por_fase[fase]:
+    for indice_pos, pos in enumerate(inimigos_por_fase[fase]):
         if pode_andar(
             pos[0],
             pos[1],
@@ -900,12 +1034,16 @@ def carregar_fase(numero):
             )
 
             tempo_ataque_inimigos.append(0)
+            # O primeiro monstro da fase 1 é o portador da chave.
+            inimigos_com_chave.append(fase == 0 and indice_pos == 0)
 
     mudando_fase = False
     tempo_transicao = 0
 
 def alternar_porta():
     global porta_estado
+    global mensagem
+    global tempo_mensagem
 
     distancia = math.hypot(
         x - (PORTA_X + 0.5),
@@ -913,10 +1051,18 @@ def alternar_porta():
     )
 
     if distancia > 2.0:
+        mensagem = "APROXIME-SE DA PORTA"
+        tempo_mensagem = 60
         return
 
     if porta_estado == 0:
+        if fase == 0 and not tem_chave:
+            mensagem = "A PORTA ESTA TRANCADA! ENCONTRE A CHAVE"
+            tempo_mensagem = 100
+            return
         porta_estado = 1
+        mensagem = "PORTA DESTRANCADA"
+        tempo_mensagem = 45
         caminhos.clear()
 
     elif porta_estado == 2:
@@ -925,6 +1071,44 @@ def alternar_porta():
 
         porta_estado = 3
         caminhos.clear()
+
+def tentar_interagir():
+    """Usa a tecla E para interagir com o objeto mais próximo."""
+    global tem_chave, posicao_chave, mensagem, tempo_mensagem
+
+    if mudando_fase or jogo_vencido or jogo_pausado or menu_armas:
+        return
+
+    # Prioridade 1: pegar a chave quando estiver ao alcance.
+    if posicao_chave is not None and fase == 0 and not tem_chave:
+        distancia_chave = math.hypot(
+            x - posicao_chave[0], y - posicao_chave[1]
+        )
+        if distancia_chave <= 1.0:
+            tem_chave = True
+            posicao_chave = None
+            mensagem = "VOCE PEGOU A CHAVE!"
+            tempo_mensagem = 100
+            return
+
+    # Prioridade 2: porta. A função já verifica se o jogador tem a chave.
+    distancia_porta = math.hypot(
+        x - (PORTA_X + 0.5), y - (PORTA_Y + 0.5)
+    )
+    if distancia_porta <= 2.0:
+        alternar_porta()
+        return
+
+    # Prioridade 3: botão de conclusão/avanço de fase.
+    distancia_botao = math.hypot(
+        x - (BOTAO_X + 0.5), y - (BOTAO_Y + 0.5)
+    )
+    if distancia_botao <= 1.2:
+        tentar_ativar_botao()
+        return
+
+    mensagem = "NAO HA NADA PARA INTERAGIR PERTO"
+    tempo_mensagem = 60
 
 def atualizar_porta():
     global porta_estado
@@ -1318,69 +1502,69 @@ def desenhar_vida():
         (pos_x, pos_y + 14)
     )
 
+def selecionar_arma(tipo):
+    """Seleciona uma arma e cancela uma recarga em andamento."""
+    global arma_atual, RECARREGANDO
+    if tipo in (ARMA_RIFLE, ARMA_PISTOLA, ARMA_MOTOSERRA):
+        arma_atual = tipo
+        RECARREGANDO = False
+
+
+def desenhar_indicador_arma():
+    """Mostra a arma equipada e a munição, no canto inferior esquerdo."""
+    if arma_atual == ARMA_RIFLE:
+        nome, tecla, cor, simbolo = "RIFLE", "1", (255, 200, 50), "▰"
+        municao, reserva = rifle_municao, rifle_reserva
+    elif arma_atual == ARMA_PISTOLA:
+        nome, tecla, cor, simbolo = "PISTOLA", "2", (80, 190, 255), "▰"
+        municao, reserva = pistola_municao, pistola_reserva
+    else:
+        nome, tecla, cor, simbolo = "MOTOSERRA", "3", (240, 90, 55), "✦"
+        municao, reserva = None, None
+
+    painel_w, painel_h = 188, 58
+    painel_x = 10
+    painel_y = ALTURA - painel_h - 10
+
+    pygame.draw.rect(
+        tela, (15, 18, 24),
+        (painel_x, painel_y, painel_w, painel_h),
+        border_radius=8
+    )
+    pygame.draw.rect(
+        tela, cor,
+        (painel_x, painel_y, painel_w, painel_h),
+        2, border_radius=8
+    )
+
+    tela.blit(
+        fonte_pequena.render(f"{simbolo} {nome} [{tecla}]", True, cor),
+        (painel_x + 9, painel_y + 7)
+    )
+
+    if municao is not None:
+        texto_municao = f"MUNIÇÃO  {municao}/{reserva}"
+    else:
+        texto_municao = "CORPO A CORPO"
+
+    tela.blit(
+        fonte_pequena.render(texto_municao, True, (235, 235, 240)),
+        (painel_x + 9, painel_y + 32)
+    )
+
+
 def desenhar_hud():
+    # O painel de arma e munição é desenhado por desenhar_indicador_arma().
+    # Aqui ficam apenas os avisos de recarga e o número da fase.
     if menu_armas:
         return
 
     if arma_atual == ARMA_RIFLE:
         municao = rifle_municao
-        reserva = rifle_reserva
-        nome = "RIFLE"
-        cor = (255, 200, 50)
-
     elif arma_atual == ARMA_PISTOLA:
         municao = pistola_municao
-        reserva = pistola_reserva
-        nome = "PISTOLA"
-        cor = (80, 190, 255)
-
     else:
         municao = None
-        reserva = None
-        nome = "MOTOSERRA"
-        cor = (240, 70, 40)
-
-    pygame.draw.rect(
-        tela,
-        (10, 12, 16),
-        (8, 345, 205, 48)
-    )
-
-    pygame.draw.rect(
-        tela,
-        (70, 75, 85),
-        (8, 345, 205, 48),
-        2
-    )
-
-    texto_nome = fonte_pequena.render(
-        nome,
-        True,
-        cor
-    )
-
-    tela.blit(
-        texto_nome,
-        (18, 351)
-    )
-
-    if arma_atual == ARMA_MOTOSERRA:
-        texto_municao = fonte_pequena.render(
-            "SEM MUNICAO",
-            True,
-            (230, 230, 230)
-        )
-    else:
-        texto_municao = fonte.render(
-            f"{municao:02d} / {reserva:02d}",
-            True,
-            (245, 245, 245)
-        )
-
-    tela.blit(
-        texto_municao,
-        (85, 348)
-    )
 
     if RECARREGANDO:
         texto = fonte.render(
@@ -1388,39 +1572,30 @@ def desenhar_hud():
             True,
             (255, 210, 50)
         )
+        tela.blit(texto, texto.get_rect(center=(300, 25)))
 
-        tela.blit(
-            texto,
-            texto.get_rect(
-                center=(300, 25)
-            )
-        )
-
-    elif (
-        arma_atual != ARMA_MOTOSERRA
-        and municao == 0
-    ):
+    elif arma_atual != ARMA_MOTOSERRA and municao == 0:
         texto = fonte_pequena.render(
             "R = RECARREGAR",
             True,
             (255, 80, 60)
         )
-
-        tela.blit(
-            texto,
-            (230, 15)
-        )
+        tela.blit(texto, (230, 15))
 
     texto_fase = fonte_pequena.render(
         f"FASE {fase + 1}/2",
         True,
         (255, 255, 255)
     )
+    tela.blit(texto_fase, (15, 15))
 
-    tela.blit(
-        texto_fase,
-        (15, 15)
-    )
+    if fase == 0:
+        estado_chave = "CHAVE: SIM" if tem_chave else "CHAVE: NAO"
+        cor_chave = (255, 220, 65) if tem_chave else (190, 190, 190)
+        tela.blit(
+            fonte_pequena.render(estado_chave, True, cor_chave),
+            (15, 34)
+        )
 
 def desenhar_guias():
     if menu_armas:
@@ -1441,8 +1616,8 @@ def desenhar_guias():
     )
 
     comandos = [
+        ("E - INTERAGIR", (255, 210, 75)),
         ("F - CURAR", (90, 220, 110)),
-        ("G - PORTA", (190, 145, 80)),
         ("SHIFT - CORRER", (80, 210, 230))
     ]
 
@@ -1461,12 +1636,18 @@ def desenhar_guias():
             )
         )
 
-    if len(inimigos) == 0:
-        texto = "E - ATIVAR BOTAO"
-        cor = (70, 240, 100)
+    if posicao_chave is not None and fase == 0 and math.hypot(x - posicao_chave[0], y - posicao_chave[1]) <= 1.0:
+        texto = "E - PEGAR CHAVE"
+        cor = (255, 220, 65)
+    elif math.hypot(x - (PORTA_X + 0.5), y - (PORTA_Y + 0.5)) <= 2.0:
+        texto = "E - USAR PORTA"
+        cor = (70, 240, 100) if tem_chave or fase != 0 else (230, 70, 60)
+    elif math.hypot(x - (BOTAO_X + 0.5), y - (BOTAO_Y + 0.5)) <= 1.2:
+        texto = "E - ATIVAR BOTAO" if len(inimigos) == 0 else "MATE OS INIMIGOS"
+        cor = (70, 240, 100) if len(inimigos) == 0 else (230, 70, 60)
     else:
-        texto = "MATE OS INIMIGOS"
-        cor = (230, 70, 60)
+        texto = "E - INTERAGIR"
+        cor = (190, 195, 205)
 
     tela.blit(
         fonte_pequena.render(
@@ -1569,11 +1750,11 @@ def desenhar_menu_armas():
 
     tela.blit(
         fonte_pequena.render(
-            "M ou ESC - fechar",
+            "Clique para equipar | 1-3 ou scroll troca | M fecha",
             True,
             (160, 160, 170)
         ),
-        (225, 330)
+        (115, 330)
     )
 
 def atualizar_inimigos():
@@ -1700,6 +1881,12 @@ def desenhar_minimapa():
     desenhar_porta_minimapa()
     desenhar_botao_minimapa()
 
+    if posicao_chave is not None and fase == 0:
+        chave_mx = int(posicao_chave[0] * T)
+        chave_my = int(posicao_chave[1] * T)
+        pygame.draw.circle(tela, (255, 210, 35), (chave_mx, chave_my), 4)
+        pygame.draw.circle(tela, (255, 245, 150), (chave_mx, chave_my), 2)
+
     for inimigo in inimigos:
         pygame.draw.circle(
             tela,
@@ -1797,55 +1984,126 @@ while rodando:
 
     for evento in pygame.event.get():
 
-        if evento.type == pygame.QUIT:
-            rodando = False
-
         if evento.type == pygame.KEYDOWN:
 
             if evento.key == pygame.K_ESCAPE:
-
                 if jogo_vencido or vida_jogador <= 0:
                     rodando = False
-                else:
+                elif mudando_fase:
+                    pass
+                elif menu_armas:
                     menu_armas = False
+                else:
+                    jogo_pausado = not jogo_pausado
+                    if jogo_pausado:
+                        tela_pausa = tela.copy()
 
-            if evento.key == pygame.K_m:
+            # Enquanto pausado, somente os controles
+            # do menu ficam ativos.
+            elif jogo_pausado:
+                if evento.key == pygame.K_1:
+                    jogo_pausado = False
+
+                elif evento.key == pygame.K_2:
+                    carregar_fase(fase)
+                    jogo_pausado = False
+
+                elif evento.key == pygame.K_3:
+                    rodando = False
+
+            elif evento.key == pygame.K_m:
                 menu_armas = not menu_armas
                 RECARREGANDO = False
 
-            if menu_armas:
-
+            elif (
+                evento.key in (pygame.K_1, pygame.K_2, pygame.K_3)
+                and not jogo_pausado
+                and not mudando_fase
+                and not jogo_vencido
+                and vida_jogador > 0
+            ):
                 if evento.key == pygame.K_1:
-                    arma_atual = ARMA_RIFLE
-                    RECARREGANDO = False
-
+                    selecionar_arma(ARMA_RIFLE)
                 elif evento.key == pygame.K_2:
-                    arma_atual = ARMA_PISTOLA
-                    RECARREGANDO = False
-
+                    selecionar_arma(ARMA_PISTOLA)
                 elif evento.key == pygame.K_3:
-                    arma_atual = ARMA_MOTOSERRA
-                    RECARREGANDO = False
+                    selecionar_arma(ARMA_MOTOSERRA)
 
-            elif not mudando_fase and not jogo_vencido and vida_jogador > 0:
-
-                if evento.key == pygame.K_SPACE:
-                    tentar_atirar()
-
-                elif evento.key == pygame.K_r:
+            elif (
+                not mudando_fase
+                and not jogo_vencido
+                and vida_jogador > 0
+            ):
+                if evento.key == pygame.K_r:
                     iniciar_recarga()
 
                 elif evento.key == pygame.K_f:
                     tentar_curar()
 
-                elif evento.key == pygame.K_g:
-                    alternar_porta()
-
                 elif evento.key == pygame.K_e:
-                    tentar_ativar_botao()
+                    tentar_interagir()
 
-    if mudando_fase:
+        # Scroll do mouse troca de arma rapidamente durante a partida.
+        if evento.type == pygame.MOUSEWHEEL and not jogo_pausado and not mudando_fase:
+            if evento.y > 0:
+                selecionar_arma((arma_atual - 1) % 3)
+            elif evento.y < 0:
+                selecionar_arma((arma_atual + 1) % 3)
 
+        # Botão esquerdo do mouse dispara durante a partida.
+        # Não dispara se o clique for usado em um menu ou na tela de pausa.
+        if (
+            evento.type == pygame.MOUSEBUTTONDOWN
+            and evento.button == 1
+            and not menu_armas
+            and not jogo_pausado
+            and not mudando_fase
+            and not jogo_vencido
+            and vida_jogador > 0
+        ):
+            tentar_atirar()
+
+        # Clique em uma opção do menu também equipa a arma.
+        if evento.type == pygame.MOUSEBUTTONDOWN and evento.button == 1 and menu_armas:
+            mx, my = evento.pos
+            for indice, tipo in enumerate((ARMA_RIFLE, ARMA_PISTOLA, ARMA_MOTOSERRA)):
+                if pygame.Rect(110, 115 + indice * 65, 380, 55).collidepoint(mx, my):
+                    selecionar_arma(tipo)
+                    menu_armas = False
+                    break
+
+        if (
+            evento.type == pygame.MOUSEBUTTONDOWN
+            and evento.button == 1
+            and jogo_pausado
+        ):
+            mx, my = evento.pos
+
+            if pygame.Rect(
+                145, 145, 310, 45
+            ).collidepoint(mx, my):
+                jogo_pausado = False
+
+            elif pygame.Rect(
+                145, 205, 310, 45
+            ).collidepoint(mx, my):
+                carregar_fase(fase)
+                jogo_pausado = False
+
+            elif pygame.Rect(
+                145, 265, 310, 45
+            ).collidepoint(mx, my):
+                rodando = False
+
+    if jogo_pausado:
+        if tela_pausa is not None:
+            tela.blit(tela_pausa, (0, 0))
+        desenhar_menu_pausa()
+        pygame.display.flip()
+        relogio.tick(FPS)
+        continue
+
+    elif mudando_fase:
         tempo_transicao -= 1
 
         if tempo_transicao <= 0:
@@ -1855,20 +2113,15 @@ while rodando:
 
         teclas = pygame.key.get_pressed()
 
-        if teclas[pygame.K_RIGHT]:
-            ang += 0.05
+        # Rotação com aceleração gradual, em vez de começar/parar bruscamente.
+        direcao_rotacao = int(teclas[pygame.K_d]) - int(teclas[pygame.K_a])
+        velocidade_angular_alvo = direcao_rotacao * 0.05
+        velocidade_angular_atual += (
+            velocidade_angular_alvo - velocidade_angular_atual
+        ) * 0.35
+        ang += velocidade_angular_atual
 
-        if teclas[pygame.K_LEFT]:
-            ang -= 0.05
-
-        passo = 0
-
-        if teclas[pygame.K_UP]:
-            passo += 1
-
-        if teclas[pygame.K_DOWN]:
-            passo -= 1
-
+        passo = int(teclas[pygame.K_w]) - int(teclas[pygame.K_s])
         andando = passo != 0
 
         correndo = (
@@ -1877,18 +2130,34 @@ while rodando:
         )
 
         if correndo and stamina > 0 and not cansado:
-            velocidade = VELOCIDADE_CORRENDO
+            velocidade_alvo = VELOCIDADE_CORRENDO
         else:
-            velocidade = VELOCIDADE_NORMAL
+            velocidade_alvo = VELOCIDADE_NORMAL
             correndo = False
 
+        if passo < 0:
+            velocidade_alvo *= -1
+        elif passo == 0:
+            velocidade_alvo = 0.0
+
+        # Acelera e desacelera suavemente, preservando a colisão com paredes.
+        fator_aceleracao = 0.28 if passo != 0 else 0.38
+        velocidade_movimento_atual += (
+            velocidade_alvo - velocidade_movimento_atual
+        ) * fator_aceleracao
+
+        if abs(velocidade_movimento_atual) < 0.002 and passo == 0:
+            velocidade_movimento_atual = 0.0
+        if direcao_rotacao == 0 and abs(velocidade_angular_atual) < 0.002:
+            velocidade_angular_atual = 0.0
+
         atualizar_stamina(
-            correndo,
+            correndo and andando,
             andando
         )
 
-        dx = math.cos(ang) * velocidade * passo
-        dy = math.sin(ang) * velocidade * passo
+        dx = math.cos(ang) * velocidade_movimento_atual
+        dy = math.sin(ang) * velocidade_movimento_atual
 
         jogador_temp = [x, y]
 
@@ -2085,6 +2354,20 @@ while rodando:
                 )
             )
 
+        # A chave aparece como um item 3D no cenário, respeitando as paredes.
+        if posicao_chave is not None and fase == 0:
+            dx_chave = posicao_chave[0] - x
+            dy_chave = posicao_chave[1] - y
+            distancia_chave = math.hypot(dx_chave, dy_chave)
+            if distancia_chave > 0.05:
+                rel_chave = (math.atan2(dy_chave, dx_chave) - ang + math.pi) % (2 * math.pi) - math.pi
+                if abs(rel_chave) <= FOV / 2:
+                    sx_chave = 300 + rel_chave / (FOV / 2) * 300
+                    col_chave = int(sx_chave / L)
+                    if 0 <= col_chave < COLUNAS and dist[col_chave] >= distancia_chave:
+                        altura_chave = min(100, max(12, 75 / distancia_chave))
+                        desenhar_sprite(sprite_chave, sx_chave, altura_chave, distancia_chave, dist)
+
         ordem = sorted(
             range(len(inimigos)),
             key=lambda i: -math.dist(
@@ -2234,9 +2517,16 @@ while rodando:
                     break
 
         if inimigo_morto is not None:
+            # O monstro portador deixa a chave exatamente onde foi derrotado.
+            if inimigo_morto < len(inimigos_com_chave) and inimigos_com_chave[inimigo_morto]:
+                if fase == 0 and not tem_chave and posicao_chave is None:
+                    posicao_chave = [inimigos[inimigo_morto][0], inimigos[inimigo_morto][1]]
+                    mensagem = "UM MONSTRO DERRUBOU UMA CHAVE!"
+                    tempo_mensagem = 100
             inimigos.pop(inimigo_morto)
             vida_inimigos.pop(inimigo_morto)
             tempo_ataque_inimigos.pop(inimigo_morto)
+            inimigos_com_chave.pop(inimigo_morto)
             caminhos.clear()
 
         desenhar_minimapa()
@@ -2268,6 +2558,7 @@ while rodando:
             desenhar_arma()
 
         desenhar_hud()
+        desenhar_indicador_arma()
         desenhar_vida()
         desenhar_stamina()
         desenhar_guias()
